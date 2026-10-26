@@ -19,18 +19,25 @@
 #define OFFSET_VIEW_MATRIX 0xE8
 #define OFFSET_AIM_ROTATION 0x440
 #define OFFSET_PLAYER_IS_DEAD 0x50
-#define OFFSET_HEAD 0x49C
-#define OFFSET_CHEST 0x4A4
-#define OFFSET_ROOT 0x4B0
+#define OFFSET_BONE_HEAD 0x49C
+#define OFFSET_BONE_CHEST 0x4A0
+#define OFFSET_BONE_NECK 0x4A4
+#define OFFSET_BONE_ROOT 0x4B0
 
 struct Vector2 { float x, y; };
 struct Vector3 { float x, y, z; };
 
 uintptr_t il2cpp_base = 0;
 int ff_pid = -1;
+int screen_w = 720;
+int screen_h = 1600;
+char status_text[256] = "Iniciando...";
+int enemy_count = 0;
+
 JavaVM* g_vm = nullptr;
 jobject g_overlayService = nullptr;
 jmethodID g_updateEntities = nullptr;
+jmethodID g_updateStatus = nullptr;
 jclass g_entityClass = nullptr;
 jmethodID g_entityInit = nullptr;
 
@@ -77,34 +84,63 @@ Vector2 CalcAngle(Vector3 src, Vector3 dst) {
     return angles;
 }
 
-void* hack_thread(void* arg) {
-    sleep(5);
-    system("su -c 'pidof com.dts.freefireth' > /data/local/tmp/ff_pid.txt");
-    FILE* fp = fopen("/data/local/tmp/ff_pid.txt", "r");
-    if (fp) { fscanf(fp, "%d", &ff_pid); fclose(fp); }
-    
-    if (ff_pid <= 0) return nullptr;
-
-    char map_path[64]; snprintf(map_path, sizeof(map_path), "/proc/%d/maps", ff_pid);
-    fp = fopen(map_path, "r");
-    if (fp) {
-        char line[512];
-        while (fgets(line, sizeof(line), fp)) {
-            if (strstr(line, "libil2cpp.so")) { il2cpp_base = strtoul(line, NULL, 16); break; }
-        }
-        fclose(fp);
+void update_java_status(JNIEnv* env) {
+    if (g_overlayService && g_updateStatus) {
+        jstring jstr = env->NewStringUTF(status_text);
+        env->CallVoidMethod(g_overlayService, g_updateStatus, jstr);
+        env->DeleteLocalRef(jstr);
     }
-    if (il2cpp_base == 0) return nullptr;
+}
 
+void* hack_thread(void* arg) {
+    sleep(2);
     JNIEnv* env; g_vm->AttachCurrentThread(&env, nullptr);
 
+    // LOOP: Tenta achar o Free Fire e a Base
+    while (true) {
+        if (ff_pid <= 0) {
+            snprintf(status_text, sizeof(status_text), "Aguardando Free Fire...");
+            update_java_status(env);
+            
+            FILE* fp = popen("su -c 'pidof com.dts.freefireth'", "r");
+            if (fp) { fscanf(fp, "%d", &ff_pid); pclose(fp); }
+            
+            if (ff_pid > 0) continue;
+            sleep(2);
+            continue;
+        }
+
+        if (il2cpp_base == 0) {
+            snprintf(status_text, sizeof(status_text), "FF Aberto. Buscando Base...");
+            update_java_status(env);
+
+            char map_path[64]; snprintf(map_path, sizeof(map_path), "/proc/%d/maps", ff_pid);
+            FILE* fp = fopen(map_path, "r");
+            if (fp) {
+                char line[512];
+                while (fgets(line, sizeof(line), fp)) {
+                    if (strstr(line, "libil2cpp.so")) { il2cpp_base = strtoul(line, NULL, 16); break; }
+                }
+                fclose(fp);
+            }
+            
+            if (il2cpp_base > 0) {
+                snprintf(status_text, sizeof(status_text), "Conectado! PID: %d", ff_pid);
+                update_java_status(env);
+                break; // Sai do loop de conexão e vai para o hack
+            }
+            sleep(2);
+        }
+    }
+
+    // LOOP PRINCIPAL DO HACK
     while (true) {
         if (aimbot_on || esp_on) {
             uintptr_t init_base = read_mem<uintptr_t>(il2cpp_base + OFFSET_INIT_BASE);
             if (init_base) {
                 uintptr_t current_match = read_mem<uintptr_t>(init_base + OFFSET_CURRENT_MATCH);
                 if (current_match) {
-                    uintptr_t game = read_mem<uintptr_t>(current_match + OFFSET_GAME);
+                    uintptr_t game = read_mem<uintptr_t>(game + OFFSET_GAME);
                     if (game) {
                         uintptr_t local_player = read_mem<uintptr_t>(game + OFFSET_LOCAL_PLAYER);
                         uintptr_t entities_dict = read_mem<uintptr_t>(game + OFFSET_DICT_ENTITIES);
@@ -115,12 +151,12 @@ void* hack_thread(void* arg) {
                             float matrix[16];
                             for(int i=0; i<16; i++) matrix[i] = read_mem<float>(camera_t + OFFSET_VIEW_MATRIX + (i*4));
 
-                            int w = 1080; int h = 2400;
                             uintptr_t entries = read_mem<uintptr_t>(entities_dict + 0x18);
                             int count = read_mem<int>(entities_dict + 0x20);
 
                             Vector3 best_target = {0, 0, 0};
                             float closest_dist = aim_fov;
+                            enemy_count = 0;
 
                             if (entries && count > 0 && count < 100) {
                                 jclass listClass = env->FindClass("java/util/ArrayList");
@@ -135,9 +171,9 @@ void* hack_thread(void* arg) {
                                     if (enemy && enemy != local_player) {
                                         bool is_dead = read_mem<bool>(enemy + OFFSET_PLAYER_IS_DEAD);
                                         if (!is_dead) {
-                                            uintptr_t head_t = read_mem<uintptr_t>(enemy + OFFSET_HEAD);
-                                            uintptr_t chest_t = read_mem<uintptr_t>(enemy + OFFSET_CHEST);
-                                            uintptr_t root_t = read_mem<uintptr_t>(enemy + OFFSET_ROOT);
+                                            uintptr_t head_t = read_mem<uintptr_t>(enemy + OFFSET_BONE_HEAD);
+                                            uintptr_t chest_t = read_mem<uintptr_t>(enemy + OFFSET_BONE_CHEST);
+                                            uintptr_t root_t = read_mem<uintptr_t>(enemy + OFFSET_BONE_ROOT);
 
                                             if (head_t && chest_t && root_t) {
                                                 Vector3 h_pos = read_mem<Vector3>(head_t + 0x20);
@@ -145,10 +181,11 @@ void* hack_thread(void* arg) {
                                                 Vector3 r_pos = read_mem<Vector3>(root_t + 0x20);
 
                                                 Vector2 sh, sc, sr;
-                                                if (WorldToScreen(matrix, h_pos, w, h, &sh) &&
-                                                    WorldToScreen(matrix, c_pos, w, h, &sc) &&
-                                                    WorldToScreen(matrix, r_pos, w, h, &sr)) {
+                                                if (WorldToScreen(matrix, h_pos, screen_w, screen_h, &sh) &&
+                                                    WorldToScreen(matrix, c_pos, screen_w, screen_h, &sc) &&
+                                                    WorldToScreen(matrix, r_pos, screen_w, screen_h, &sr)) {
                                                     
+                                                    enemy_count++;
                                                     if (esp_on) {
                                                         float bh = sr.y - sh.y; float bw = bh * 0.45f;
                                                         jfloatArray seg = env->NewFloatArray(12);
@@ -158,10 +195,12 @@ void* hack_thread(void* arg) {
                                                         env->CallBooleanMethod(list, listAdd, entity);
                                                     }
 
-                                                    float dist = sqrt(pow(sh.x - w/2, 2) + pow(sh.y - h/2, 2));
+                                                    float dist = sqrt(pow(sh.x - screen_w/2, 2) + pow(sh.y - screen_h/2, 2));
                                                     if (dist < closest_dist && dist > 0.1f) { 
                                                         closest_dist = dist; 
-                                                        best_target = (target_bone == 0) ? h_pos : c_pos; 
+                                                        if (target_bone == 0) best_target = h_pos;
+                                                        else if (target_bone == 1) best_target = c_pos;
+                                                        else if (target_bone == 2) best_target = read_mem<Vector3>(read_mem<uintptr_t>(enemy + OFFSET_BONE_NECK) + 0x20);
                                                     }
                                                 }
                                             }
@@ -181,22 +220,31 @@ void* hack_thread(void* arg) {
                                 write_mem<float>(aim_addr, smoothed.x);
                                 write_mem<float>(aim_addr + 0x4, smoothed.y);
                             }
+                            
+                            snprintf(status_text, sizeof(status_text), "Jogo Ativo | Inimigos: %d", enemy_count);
+                        } else {
+                            snprintf(status_text, sizeof(status_text), "No Lobby ou Partida Invalida");
                         }
                     }
                 }
             }
+        } else {
+            snprintf(status_text, sizeof(status_text), "Conectado. Ative Aimbot/ESP.");
         }
-        usleep(10000);
+        update_java_status(env);
+        usleep(500000);
     }
     return nullptr;
 }
 
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) { g_vm = vm; return JNI_VERSION_1_6; }
 
-extern "C" JNIEXPORT void JNICALL Java_com_example_rootpanel_OverlayService_nativeStart(JNIEnv* env, jobject thiz) {
+extern "C" JNIEXPORT void JNICALL Java_com_example_rootpanel_OverlayService_nativeStart(JNIEnv* env, jobject thiz, jint w, jint h) {
+    screen_w = w; screen_h = h;
     g_overlayService = env->NewGlobalRef(thiz);
     jclass serviceClass = env->GetObjectClass(thiz);
     g_updateEntities = env->GetMethodID(serviceClass, "updateEntities", "(Ljava/util/List;)V");
+    g_updateStatus = env->GetMethodID(serviceClass, "updateStatus", "(Ljava/lang/String;)V");
     g_entityClass = env->FindClass("com/example/rootpanel/Entity");
     g_entityInit = env->GetMethodID(g_entityClass, "<init>", "(FFFFI[FI)V");
     pthread_t pt; pthread_create(&pt, NULL, hack_thread, NULL); pthread_detach(pt);
