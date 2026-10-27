@@ -114,12 +114,16 @@ void* hack_thread(void* arg) {
             snprintf(status_text, sizeof(status_text), "FF Aberto. Buscando Base...");
             update_java_status(env);
 
-            char map_path[64]; snprintf(map_path, sizeof(map_path), "/proc/%d/maps", ff_pid);
-            FILE* fp = fopen(map_path, "r");
+            // CORREÇÃO: Usa o comando Root para ler o maps e salvar a base
+            char cmd[256];
+            snprintf(cmd, sizeof(cmd), "su -c 'grep libil2cpp.so /proc/%d/maps | head -n 1 | cut -d \"-\" -f 1' > /data/local/tmp/base_addr.txt", ff_pid);
+            system(cmd);
+
+            FILE* fp = fopen("/data/local/tmp/base_addr.txt", "r");
             if (fp) {
-                char line[512];
-                while (fgets(line, sizeof(line), fp)) {
-                    if (strstr(line, "libil2cpp.so")) { il2cpp_base = strtoul(line, NULL, 16); break; }
+                char base_str[32];
+                if (fgets(base_str, sizeof(base_str), fp)) {
+                    il2cpp_base = strtoul(base_str, NULL, 16);
                 }
                 fclose(fp);
             }
@@ -140,7 +144,7 @@ void* hack_thread(void* arg) {
             if (init_base) {
                 uintptr_t current_match = read_mem<uintptr_t>(init_base + OFFSET_CURRENT_MATCH);
                 if (current_match) {
-                    uintptr_t game = read_mem<uintptr_t>(game + OFFSET_GAME);
+                    uintptr_t game = read_mem<uintptr_t>(current_match + OFFSET_GAME);
                     if (game) {
                         uintptr_t local_player = read_mem<uintptr_t>(game + OFFSET_LOCAL_PLAYER);
                         uintptr_t entities_dict = read_mem<uintptr_t>(game + OFFSET_DICT_ENTITIES);
