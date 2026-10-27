@@ -96,7 +96,6 @@ void* hack_thread(void* arg) {
     sleep(2);
     JNIEnv* env; g_vm->AttachCurrentThread(&env, nullptr);
 
-    // LOOP: Tenta achar o Free Fire e a Base
     while (true) {
         if (ff_pid <= 0) {
             snprintf(status_text, sizeof(status_text), "Aguardando Free Fire...");
@@ -114,16 +113,19 @@ void* hack_thread(void* arg) {
             snprintf(status_text, sizeof(status_text), "FF Aberto. Buscando Base...");
             update_java_status(env);
 
-            // CORREÇÃO: Usa o comando Root para ler o maps e salvar a base
-            char cmd[256];
-            snprintf(cmd, sizeof(cmd), "su -c 'grep libil2cpp.so /proc/%d/maps | head -n 1 | cut -d \"-\" -f 1' > /data/local/tmp/base_addr.txt", ff_pid);
+            // NOVA ABORDAGEM: Manda o root copiar o maps para a pasta do app
+            char cmd[512];
+            snprintf(cmd, sizeof(cmd), "su -c 'cat /proc/%d/maps > /data/data/com.example.rootpanel/maps.txt'", ff_pid);
             system(cmd);
 
-            FILE* fp = fopen("/data/local/tmp/base_addr.txt", "r");
+            FILE* fp = fopen("/data/data/com.example.rootpanel/maps.txt", "r");
             if (fp) {
-                char base_str[32];
-                if (fgets(base_str, sizeof(base_str), fp)) {
-                    il2cpp_base = strtoul(base_str, NULL, 16);
+                char line[512];
+                while (fgets(line, sizeof(line), fp)) {
+                    if (strstr(line, "libil2cpp.so")) { 
+                        il2cpp_base = strtoul(line, NULL, 16); 
+                        break; 
+                    }
                 }
                 fclose(fp);
             }
@@ -131,13 +133,12 @@ void* hack_thread(void* arg) {
             if (il2cpp_base > 0) {
                 snprintf(status_text, sizeof(status_text), "Conectado! PID: %d", ff_pid);
                 update_java_status(env);
-                break; // Sai do loop de conexão e vai para o hack
+                break; 
             }
             sleep(2);
         }
     }
 
-    // LOOP PRINCIPAL DO HACK
     while (true) {
         if (aimbot_on || esp_on) {
             uintptr_t init_base = read_mem<uintptr_t>(il2cpp_base + OFFSET_INIT_BASE);
