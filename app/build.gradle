@@ -5,6 +5,7 @@ plugins {
 android {
     namespace 'com.example.rootpanel'
     compileSdk 33
+    ndkVersion "25.2.9519653" // FORÇA O USO DO NDK PARA COMPILAR O C++
 
     defaultConfig {
         applicationId "com.example.rootpanel"
@@ -29,9 +30,11 @@ android {
         }
     }
 
+    // Garante que o CMake seja chamado
     externalNativeBuild {
         cmake {
             path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
         }
     }
     
