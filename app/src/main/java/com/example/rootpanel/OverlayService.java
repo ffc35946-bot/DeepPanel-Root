@@ -2,7 +2,9 @@ package com.example.rootpanel;
 import android.app.*;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -22,7 +24,7 @@ public class OverlayService extends Service {
     private WindowManager wm;
     private OverlayView espView;
     private LinearLayout menuLayout;
-    private LinearLayout minimizedIcon;
+    private View minimizedIcon;
     private TextView tvStatus;
     private WindowManager.LayoutParams menuParams;
     private WindowManager.LayoutParams iconParams;
@@ -40,16 +42,13 @@ public class OverlayService extends Service {
 
         int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE;
 
-        // ESP View
         espView = new OverlayView(this);
         WindowManager.LayoutParams espParams = new WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT, type, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS, PixelFormat.TRANSLUCENT);
         wm.addView(espView, espParams);
 
-        // Layout do Menu (Mais compacto)
         menuLayout = new LinearLayout(this); menuLayout.setOrientation(LinearLayout.VERTICAL); menuLayout.setPadding(30, 30, 30, 30);
         GradientDrawable bg = new GradientDrawable(); bg.setColor(Color.parseColor("#1E1E2E")); bg.setCornerRadius(20); bg.setStroke(3, Color.parseColor("#4D6BFE")); menuLayout.setBackground(bg);
 
-        // Barra de Título com Botões de Fechar e Minimizar
         LinearLayout titleBar = new LinearLayout(this);
         titleBar.setOrientation(LinearLayout.HORIZONTAL);
         titleBar.setGravity(Gravity.CENTER_VERTICAL);
@@ -62,38 +61,36 @@ public class OverlayService extends Service {
         title.setTypeface(null, Typeface.BOLD); 
         title.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         
-        Button btnMinimize = new Button(this);
-        btnMinimize.setText("➖");
-        btnMinimize.setBackgroundColor(Color.TRANSPARENT);
-        btnMinimize.setTextColor(Color.WHITE);
-        btnMinimize.setPadding(0, 0, 0, 0);
-        btnMinimize.setOnClickListener(v -> {
-            menuLayout.setVisibility(View.GONE);
-            minimizedIcon.setVisibility(View.VISIBLE);
-        });
+        View btnMinimize = new View(this) {
+            @Override protected void onDraw(Canvas canvas) {
+                Paint p = new Paint(); p.setColor(Color.WHITE); p.setStrokeWidth(4f);
+                canvas.drawLine(getWidth()*0.2f, getHeight()*0.5f, getWidth()*0.8f, getHeight()*0.5f, p);
+            }
+        };
+        btnMinimize.setLayoutParams(new LinearLayout.LayoutParams(60, 60));
+        btnMinimize.setOnClickListener(v -> { menuLayout.setVisibility(View.GONE); minimizedIcon.setVisibility(View.VISIBLE); });
 
-        Button btnClose = new Button(this);
-        btnClose.setText("❌");
-        btnClose.setBackgroundColor(Color.TRANSPARENT);
-        btnClose.setTextColor(Color.WHITE);
-        btnClose.setPadding(0, 0, 0, 0);
-        btnClose.setOnClickListener(v -> stopSelf()); // Fecha o app
+        View btnClose = new View(this) {
+            @Override protected void onDraw(Canvas canvas) {
+                Paint p = new Paint(); p.setColor(Color.RED); p.setStrokeWidth(4f);
+                canvas.drawLine(getWidth()*0.2f, getHeight()*0.2f, getWidth()*0.8f, getHeight()*0.8f, p);
+                canvas.drawLine(getWidth()*0.2f, getHeight()*0.8f, getWidth()*0.8f, getHeight()*0.2f, p);
+            }
+        };
+        btnClose.setLayoutParams(new LinearLayout.LayoutParams(60, 60));
+        btnClose.setOnClickListener(v -> stopSelf());
 
-        titleBar.addView(title);
-        titleBar.addView(btnMinimize);
-        titleBar.addView(btnClose);
+        titleBar.addView(title); titleBar.addView(btnMinimize); titleBar.addView(btnClose);
         menuLayout.addView(titleBar);
 
-        // Status HUD
         tvStatus = new TextView(this);
-        tvStatus.setText("Status: Conectando...");
+        tvStatus.setText("Status: Aguardando...");
         tvStatus.setTextColor(Color.YELLOW);
-        tvStatus.setTextSize(12);
-        tvStatus.setTypeface(null, Typeface.BOLD);
+        tvStatus.setTextSize(11);
+        tvStatus.setTypeface(Typeface.MONOSPACE);
         tvStatus.setPadding(0, 0, 0, 15);
         menuLayout.addView(tvStatus);
 
-        // Divisor
         View divider = new View(this); divider.setBackgroundColor(Color.parseColor("#4D6BFE")); LinearLayout.LayoutParams divParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 2); divParams.setMargins(0, 0, 0, 15); divider.setLayoutParams(divParams); menuLayout.addView(divider);
 
         Switch swAimbot = new Switch(this); swAimbot.setText("Aimbot"); swAimbot.setTextColor(Color.WHITE); swAimbot.setTextSize(14); swAimbot.setOnCheckedChangeListener((v, isChecked) -> setAimbot(isChecked)); menuLayout.addView(swAimbot);
@@ -101,20 +98,11 @@ public class OverlayService extends Service {
         Spinner spinBone = new Spinner(this); 
         final String[] bones = {"Cabeça", "Peito", "Pescoço"}; 
         ArrayAdapter<String> adapter = new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item, bones) {
-            @Override
-            public View getView(int position, View convertView, ViewGroup parent) {
-                TextView tv = (TextView) super.getView(position, convertView, parent);
-                tv.setTextColor(Color.RED);
-                tv.setTypeface(null, Typeface.BOLD);
-                tv.setTextSize(14);
-                return tv;
+            @Override public View getView(int position, View convertView, ViewGroup parent) {
+                TextView tv = (TextView) super.getView(position, convertView, parent); tv.setTextColor(Color.RED); tv.setTextSize(14); return tv;
             }
-            @Override
-            public View getDropDownView(int position, View convertView, ViewGroup parent) {
-                TextView tv = (TextView) super.getDropDownView(position, convertView, parent);
-                tv.setTextColor(Color.RED);
-                tv.setTextSize(14);
-                return tv;
+            @Override public View getDropDownView(int position, View convertView, ViewGroup parent) {
+                TextView tv = (TextView) super.getDropDownView(position, convertView, parent); tv.setTextColor(Color.RED); tv.setTextSize(14); return tv;
             }
         };
         spinBone.setAdapter(adapter); 
@@ -138,50 +126,30 @@ public class OverlayService extends Service {
                 switch (event.getAction()) { 
                     case MotionEvent.ACTION_DOWN: initialX = menuParams.x; initialY = menuParams.y; initialTouchX = (int) event.getRawX(); initialTouchY = (int) event.getRawY(); return true; 
                     case MotionEvent.ACTION_MOVE: menuParams.x = (int) (initialX + (event.getRawX() - initialTouchX)); menuParams.y = (int) (initialY + (event.getRawY() - initialTouchY)); wm.updateViewLayout(menuLayout, menuParams); return true; 
-                } 
-                return false; 
+                } return false; 
             } 
         });
         wm.addView(menuLayout, menuParams);
 
-        // Ícone Minimizado (Quadrado Arredondado, sem robô, menor)
-        minimizedIcon = new LinearLayout(this);
-        GradientDrawable iconBg = new GradientDrawable(); 
-        iconBg.setShape(GradientDrawable.RECTANGLE); 
-        iconBg.setCornerRadius(15); 
-        iconBg.setColor(Color.parseColor("#1E1E2E")); 
-        iconBg.setStroke(3, Color.parseColor("#4D6BFE"));
-        minimizedIcon.setBackground(iconBg);
+        minimizedIcon = new View(this) {
+            @Override protected void onDraw(Canvas canvas) {
+                Paint p = new Paint(Paint.ANTI_ALIAS_FLAG); p.setColor(Color.parseColor("#4D6BFE")); p.setStyle(Paint.Style.FILL);
+                canvas.drawRoundRect(0, 0, getWidth(), getHeight(), 12, 12, p);
+            }
+        };
         minimizedIcon.setVisibility(View.GONE);
-        
-        iconParams = new WindowManager.LayoutParams(60, 60, type, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
+        iconParams = new WindowManager.LayoutParams(50, 50, type, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT);
         iconParams.gravity = Gravity.TOP | Gravity.START; iconParams.x = 100; iconParams.y = 200;
 
         minimizedIcon.setOnTouchListener(new View.OnTouchListener() {
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getAction()) {
-                    case MotionEvent.ACTION_DOWN:
-                        initialX = iconParams.x;
-                        initialY = iconParams.y;
-                        initialTouchX = (int) event.getRawX();
-                        initialTouchY = (int) event.getRawY();
-                        return true;
-                    case MotionEvent.ACTION_UP:
-                        if (Math.abs(event.getRawX() - initialTouchX) < 10 && Math.abs(event.getRawY() - initialTouchY) < 10) {
-                            minimizedIcon.setVisibility(View.GONE);
-                            menuLayout.setVisibility(View.VISIBLE);
-                        }
-                        return true;
-                    case MotionEvent.ACTION_MOVE:
-                        iconParams.x = (int) (initialX + (event.getRawX() - initialTouchX));
-                        iconParams.y = (int) (initialY + (event.getRawY() - initialTouchY));
-                        wm.updateViewLayout(minimizedIcon, iconParams);
-                        return true;
-                }
-                return false;
+                    case MotionEvent.ACTION_DOWN: initialX = iconParams.x; initialY = iconParams.y; initialTouchX = (int) event.getRawX(); initialTouchY = (int) event.getRawY(); return true;
+                    case MotionEvent.ACTION_UP: if (Math.abs(event.getRawX() - initialTouchX) < 10 && Math.abs(event.getRawY() - initialTouchY) < 10) { minimizedIcon.setVisibility(View.GONE); menuLayout.setVisibility(View.VISIBLE); } return true;
+                    case MotionEvent.ACTION_MOVE: iconParams.x = (int) (initialX + (event.getRawX() - initialTouchX)); iconParams.y = (int) (initialY + (event.getRawY() - initialTouchY)); wm.updateViewLayout(minimizedIcon, iconParams); return true;
+                } return false;
             }
         });
-        
         wm.addView(minimizedIcon, iconParams);
 
         nativeStart(screenW, screenH);
@@ -193,12 +161,12 @@ public class OverlayService extends Service {
         tvStatus.post(new Runnable() {
             public void run() {
                 tvStatus.setText(status);
-                if (status.contains("Aguardando") || status.contains("Buscando")) {
-                    tvStatus.setTextColor(Color.YELLOW);
-                } else if (status.contains("Conectado") || status.contains("Jogo Ativo")) {
-                    tvStatus.setTextColor(Color.GREEN);
-                } else {
+                if (status.contains("ERRO") || status.contains("0")) {
                     tvStatus.setTextColor(Color.RED);
+                } else if (status.contains("IB:") || status.contains("LP:")) {
+                    tvStatus.setTextColor(Color.YELLOW);
+                } else {
+                    tvStatus.setTextColor(Color.GREEN);
                 }
             }
         });
@@ -211,13 +179,8 @@ public class OverlayService extends Service {
     public native void setSmooth(int val); 
     public native void setBone(int val);
 
-    private void startForegroundCompat() { Notification.Builder b; if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { NotificationChannel ch = new NotificationChannel("ovl", "Overlay", NotificationManager.IMPORTANCE_LOW); ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(ch); b = new Notification.Builder(this, "ovl"); } else { b = new Notification.Builder(this); } b.setContentTitle("Deep Panel Rodando").setSmallIcon(android.R.drawable.ic_menu_view); startForeground(1, b.build()); }
+    private void startForegroundCompat() { Notification.Builder b; if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { NotificationChannel ch = new NotificationChannel("ovl", "Overlay", NotificationManager.IMPORTANCE_LOW); ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(ch); b = new Notification.Builder(this, "ovl"); } else { b = new Notification.Builder(this); } b.setContentTitle("Deep Panel").setSmallIcon(android.R.drawable.ic_menu_view); startForeground(1, b.build()); }
     
-    @Override public void onDestroy() { 
-        super.onDestroy(); 
-        if (espView != null) wm.removeView(espView); 
-        if (menuLayout != null) wm.removeView(menuLayout); 
-        if (minimizedIcon != null) wm.removeView(minimizedIcon);
-    }
+    @Override public void onDestroy() { super.onDestroy(); if (espView != null) wm.removeView(espView); if (menuLayout != null) wm.removeView(menuLayout); if (minimizedIcon != null) wm.removeView(minimizedIcon); }
     @Override public IBinder onBind(Intent intent) { return null; }
 }

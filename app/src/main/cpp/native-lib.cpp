@@ -10,6 +10,7 @@
 
 #define LOG_TAG "DeepPanelRoot"
 
+// SEUS OFFSETS
 #define OFFSET_INIT_BASE 0xA342EFC
 #define OFFSET_CURRENT_MATCH 0x50
 #define OFFSET_GAME 0x4
@@ -20,9 +21,6 @@
 #define OFFSET_AIM_ROTATION 0x440
 #define OFFSET_PLAYER_IS_DEAD 0x50
 #define OFFSET_BONE_HEAD 0x49C
-#define OFFSET_BONE_CHEST 0x4A0
-#define OFFSET_BONE_NECK 0x4A4
-#define OFFSET_BONE_ROOT 0x4B0
 
 struct Vector2 { float x, y; };
 struct Vector3 { float x, y, z; };
@@ -31,7 +29,7 @@ uintptr_t il2cpp_base = 0;
 int ff_pid = -1;
 int screen_w = 720;
 int screen_h = 1600;
-char status_text[256] = "Iniciando...";
+char status_text[512] = "Iniciando...";
 int enemy_count = 0;
 
 JavaVM* g_vm = nullptr;
@@ -100,38 +98,29 @@ void* hack_thread(void* arg) {
         if (ff_pid <= 0) {
             snprintf(status_text, sizeof(status_text), "Aguardando Free Fire...");
             update_java_status(env);
-            
             FILE* fp = popen("su -c 'pidof com.dts.freefireth'", "r");
             if (fp) { fscanf(fp, "%d", &ff_pid); pclose(fp); }
-            
             if (ff_pid > 0) continue;
             sleep(2);
             continue;
         }
 
         if (il2cpp_base == 0) {
-            snprintf(status_text, sizeof(status_text), "FF Aberto. Buscando Base...");
+            snprintf(status_text, sizeof(status_text), "Buscando Base...");
             update_java_status(env);
-
-            // NOVA ABORDAGEM: Manda o root copiar o maps para a pasta do app
             char cmd[512];
             snprintf(cmd, sizeof(cmd), "su -c 'cat /proc/%d/maps > /data/data/com.example.rootpanel/maps.txt'", ff_pid);
             system(cmd);
-
             FILE* fp = fopen("/data/data/com.example.rootpanel/maps.txt", "r");
             if (fp) {
                 char line[512];
                 while (fgets(line, sizeof(line), fp)) {
-                    if (strstr(line, "libil2cpp.so")) { 
-                        il2cpp_base = strtoul(line, NULL, 16); 
-                        break; 
-                    }
+                    if (strstr(line, "libil2cpp.so")) { il2cpp_base = strtoul(line, NULL, 16); break; }
                 }
                 fclose(fp);
             }
-            
             if (il2cpp_base > 0) {
-                snprintf(status_text, sizeof(status_text), "Conectado! PID: %d", ff_pid);
+                snprintf(status_text, sizeof(status_text), "Base OK. Lendo Offsets...");
                 update_java_status(env);
                 break; 
             }
@@ -139,102 +128,89 @@ void* hack_thread(void* arg) {
         }
     }
 
+    // LOOP DE DIAGNÓSTICO E HACK
     while (true) {
         if (aimbot_on || esp_on) {
+            // LEITURA DOS PONTEIROS E DIAGNÓSTICO
             uintptr_t init_base = read_mem<uintptr_t>(il2cpp_base + OFFSET_INIT_BASE);
-            if (init_base) {
-                uintptr_t current_match = read_mem<uintptr_t>(init_base + OFFSET_CURRENT_MATCH);
-                if (current_match) {
-                    uintptr_t game = read_mem<uintptr_t>(current_match + OFFSET_GAME);
-                    if (game) {
-                        uintptr_t local_player = read_mem<uintptr_t>(game + OFFSET_LOCAL_PLAYER);
-                        uintptr_t entities_dict = read_mem<uintptr_t>(game + OFFSET_DICT_ENTITIES);
+            uintptr_t current_match = init_base ? read_mem<uintptr_t>(init_base + OFFSET_CURRENT_MATCH) : 0;
+            uintptr_t game = current_match ? read_mem<uintptr_t>(current_match + OFFSET_GAME) : 0;
+            uintptr_t local_player = game ? read_mem<uintptr_t>(game + OFFSET_LOCAL_PLAYER) : 0;
+            uintptr_t entities_dict = game ? read_mem<uintptr_t>(game + OFFSET_DICT_ENTITIES) : 0;
 
-                        if (local_player && entities_dict) {
-                            uintptr_t camera_t = read_mem<uintptr_t>(local_player + OFFSET_MAIN_CAMERA_TRANSFORM);
-                            Vector3 camera_pos = read_mem<Vector3>(camera_t + 0x20);
-                            float matrix[16];
-                            for(int i=0; i<16; i++) matrix[i] = read_mem<float>(camera_t + OFFSET_VIEW_MATRIX + (i*4));
+            // Mostra os valores na tela (em Hexadecimal)
+            snprintf(status_text, sizeof(status_text), 
+                "IB:%lx | CM:%lx | G:%lx\nLP:%lx | ED:%lx", 
+                init_base, current_match, game, local_player, entities_dict);
+            update_java_status(env);
 
-                            uintptr_t entries = read_mem<uintptr_t>(entities_dict + 0x18);
-                            int count = read_mem<int>(entities_dict + 0x20);
+            if (local_player && entities_dict) {
+                uintptr_t camera_t = read_mem<uintptr_t>(local_player + OFFSET_MAIN_CAMERA_TRANSFORM);
+                Vector3 camera_pos = read_mem<Vector3>(camera_t + 0x20);
+                float matrix[16];
+                for(int i=0; i<16; i++) matrix[i] = read_mem<float>(camera_t + OFFSET_VIEW_MATRIX + (i*4));
 
-                            Vector3 best_target = {0, 0, 0};
-                            float closest_dist = aim_fov;
-                            enemy_count = 0;
+                uintptr_t entries = read_mem<uintptr_t>(entities_dict + 0x18);
+                int count = read_mem<int>(entities_dict + 0x20);
+                enemy_count = 0;
 
-                            if (entries && count > 0 && count < 100) {
-                                jclass listClass = env->FindClass("java/util/ArrayList");
-                                jmethodID listInit = env->GetMethodID(listClass, "<init>", "()V");
-                                jmethodID listAdd = env->GetMethodID(listClass, "add", "(Ljava/lang/Object;)Z");
-                                jobject list = env->NewObject(listClass, listInit);
+                Vector3 best_target = {0, 0, 0};
+                float closest_dist = aim_fov;
 
-                                for (int i = 0; i < count; i++) {
-                                    uintptr_t entry = entries + 0x20 + (i * 0x18);
-                                    uintptr_t enemy = read_mem<uintptr_t>(entry + 0x10);
-                                    
-                                    if (enemy && enemy != local_player) {
-                                        bool is_dead = read_mem<bool>(enemy + OFFSET_PLAYER_IS_DEAD);
-                                        if (!is_dead) {
-                                            uintptr_t head_t = read_mem<uintptr_t>(enemy + OFFSET_BONE_HEAD);
-                                            uintptr_t chest_t = read_mem<uintptr_t>(enemy + OFFSET_BONE_CHEST);
-                                            uintptr_t root_t = read_mem<uintptr_t>(enemy + OFFSET_BONE_ROOT);
+                if (entries && count > 0 && count < 100) {
+                    jclass listClass = env->FindClass("java/util/ArrayList");
+                    jmethodID listInit = env->GetMethodID(listClass, "<init>", "()V");
+                    jmethodID listAdd = env->GetMethodID(listClass, "add", "(Ljava/lang/Object;)Z");
+                    jobject list = env->NewObject(listClass, listInit);
 
-                                            if (head_t && chest_t && root_t) {
-                                                Vector3 h_pos = read_mem<Vector3>(head_t + 0x20);
-                                                Vector3 c_pos = read_mem<Vector3>(chest_t + 0x20);
-                                                Vector3 r_pos = read_mem<Vector3>(root_t + 0x20);
+                    for (int i = 0; i < count; i++) {
+                        uintptr_t entry = entries + 0x20 + (i * 0x18);
+                        uintptr_t enemy = read_mem<uintptr_t>(entry + 0x10);
+                        
+                        if (enemy && enemy != local_player) {
+                            bool is_dead = read_mem<bool>(enemy + OFFSET_PLAYER_IS_DEAD);
+                            if (!is_dead) {
+                                uintptr_t head_t = read_mem<uintptr_t>(enemy + OFFSET_BONE_HEAD);
+                                if (head_t) {
+                                    Vector3 h_pos = read_mem<Vector3>(head_t + 0x20);
+                                    Vector2 sh;
+                                    if (WorldToScreen(matrix, h_pos, screen_w, screen_h, &sh)) {
+                                        enemy_count++;
+                                        
+                                        if (esp_on) {
+                                            jfloatArray seg = env->NewFloatArray(12);
+                                            jfloat s[12] = { sh.x, sh.y, sh.x, sh.y, sh.x, sh.y, sh.x, sh.y, sh.x, sh.y, sh.x, sh.y };
+                                            env->SetFloatArrayRegion(seg, 0, 12, s);
+                                            jobject entity = env->NewObject(g_entityClass, g_entityInit, sh.x - 20, sh.y - 80, 40, 80, 0xFFFF0000, seg, 0xFFFFFFFF);
+                                            env->CallBooleanMethod(list, listAdd, entity);
+                                        }
 
-                                                Vector2 sh, sc, sr;
-                                                if (WorldToScreen(matrix, h_pos, screen_w, screen_h, &sh) &&
-                                                    WorldToScreen(matrix, c_pos, screen_w, screen_h, &sc) &&
-                                                    WorldToScreen(matrix, r_pos, screen_w, screen_h, &sr)) {
-                                                    
-                                                    enemy_count++;
-                                                    if (esp_on) {
-                                                        float bh = sr.y - sh.y; float bw = bh * 0.45f;
-                                                        jfloatArray seg = env->NewFloatArray(12);
-                                                        jfloat s[12] = { sh.x, sh.y, sc.x, sc.y, sc.x, sc.y, sr.x, sr.y, sh.x, sh.y, sr.x, sr.y };
-                                                        env->SetFloatArrayRegion(seg, 0, 12, s);
-                                                        jobject entity = env->NewObject(g_entityClass, g_entityInit, sh.x - bw/2, sh.y, bw, bh, 0xFFFF0000, seg, 0xFFFFFFFF);
-                                                        env->CallBooleanMethod(list, listAdd, entity);
-                                                    }
-
-                                                    float dist = sqrt(pow(sh.x - screen_w/2, 2) + pow(sh.y - screen_h/2, 2));
-                                                    if (dist < closest_dist && dist > 0.1f) { 
-                                                        closest_dist = dist; 
-                                                        if (target_bone == 0) best_target = h_pos;
-                                                        else if (target_bone == 1) best_target = c_pos;
-                                                        else if (target_bone == 2) best_target = read_mem<Vector3>(read_mem<uintptr_t>(enemy + OFFSET_BONE_NECK) + 0x20);
-                                                    }
-                                                }
-                                            }
+                                        float dist = sqrt(pow(sh.x - screen_w/2, 2) + pow(sh.y - screen_h/2, 2));
+                                        if (dist < closest_dist && dist > 0.1f) { 
+                                            closest_dist = dist; 
+                                            best_target = h_pos;
                                         }
                                     }
                                 }
-                                env->CallVoidMethod(g_overlayService, g_updateEntities, list);
                             }
-
-                            if (best_target.x != 0 && best_target.y != 0 && aimbot_on) {
-                                Vector2 aim_angles = CalcAngle(camera_pos, best_target);
-                                uintptr_t aim_addr = local_player + OFFSET_AIM_ROTATION;
-                                Vector2 current_angles = read_mem<Vector2>(aim_addr);
-                                Vector2 smoothed;
-                                smoothed.x = current_angles.x + (aim_angles.x - current_angles.x) / aim_smooth;
-                                smoothed.y = current_angles.y + (aim_angles.y - current_angles.y) / aim_smooth;
-                                write_mem<float>(aim_addr, smoothed.x);
-                                write_mem<float>(aim_addr + 0x4, smoothed.y);
-                            }
-                            
-                            snprintf(status_text, sizeof(status_text), "Jogo Ativo | Inimigos: %d", enemy_count);
-                        } else {
-                            snprintf(status_text, sizeof(status_text), "No Lobby ou Partida Invalida");
                         }
                     }
+                    env->CallVoidMethod(g_overlayService, g_updateEntities, list);
+                }
+
+                if (best_target.x != 0 && best_target.y != 0 && aimbot_on) {
+                    Vector2 aim_angles = CalcAngle(camera_pos, best_target);
+                    uintptr_t aim_addr = local_player + OFFSET_AIM_ROTATION;
+                    Vector2 current_angles = read_mem<Vector2>(aim_addr);
+                    Vector2 smoothed;
+                    smoothed.x = current_angles.x + (aim_angles.x - current_angles.x) / aim_smooth;
+                    smoothed.y = current_angles.y + (aim_angles.y - current_angles.y) / aim_smooth;
+                    write_mem<float>(aim_addr, smoothed.x);
+                    write_mem<float>(aim_addr + 0x4, smoothed.y);
                 }
             }
         } else {
-            snprintf(status_text, sizeof(status_text), "Conectado. Ative Aimbot/ESP.");
+            snprintf(status_text, sizeof(status_text), "Ative os Switches para ler");
         }
         update_java_status(env);
         usleep(500000);
